@@ -64,6 +64,28 @@ io.on("connection" ,(socket) =>{
         }
     })
 
+    socket.on("groupTyping", ({ groupId, members = [], senderName }) => {
+        members.forEach((memberId) => {
+            if(memberId === userId) return;
+
+            const memberSocketId = userSocketMap[memberId];
+            if(memberSocketId) {
+                io.to(memberSocketId).emit("groupTyping", { groupId, senderId: userId, senderName });
+            }
+        })
+    })
+
+    socket.on("groupStopTyping", ({ groupId, members = [] }) => {
+        members.forEach((memberId) => {
+            if(memberId === userId) return;
+
+            const memberSocketId = userSocketMap[memberId];
+            if(memberSocketId) {
+                io.to(memberSocketId).emit("groupStopTyping", { groupId, senderId: userId });
+            }
+        })
+    })
+
     socket.on("disconnect" , () =>{
         console.log("user disconnected" , userId);
         delete userSocketMap[userId];
