@@ -7,6 +7,25 @@ import userRouter from "./routes/user.routes.js";
 import messageRouter from "./routes/message.routes.js";
 import { Server } from "socket.io";
 
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://tech-chat-dun.vercel.app",
+]
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error("Not allowed by CORS"));
+        }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "token"],
+    credentials: true,
+}
+
 
 // Create express app and http
 const app = express();
@@ -15,7 +34,7 @@ const server = http.createServer(app)
 
 // Initialize socket server
 export const io = new Server(server , {
-    cors: {origin : "*"}
+    cors: corsOptions
 })
 
 // store online users
@@ -54,8 +73,8 @@ io.on("connection" ,(socket) =>{
 })
 
 //Middleware setup
+app.use(cors(corsOptions));
 app.use(express.json({limit:"4mb"}));
-app.use(cors());
 
 //Routes
 app.use("/api/status" ,(req, res)=> res.send("bhau server shuru hai") );
