@@ -31,6 +31,20 @@ io.on("connection" ,(socket) =>{
     //Emit online user to all conected client
     io.emit("getOnlineUsers" , Object.keys(userSocketMap));
 
+    socket.on("typing", ({ receiverId }) => {
+        const receiverSocketId = userSocketMap[receiverId];
+        if(receiverSocketId) {
+            io.to(receiverSocketId).emit("typing", { senderId: userId });
+        }
+    })
+
+    socket.on("stopTyping", ({ receiverId }) => {
+        const receiverSocketId = userSocketMap[receiverId];
+        if(receiverSocketId) {
+            io.to(receiverSocketId).emit("stopTyping", { senderId: userId });
+        }
+    })
+
     socket.on("disconnect" , () =>{
         console.log("user disconnected" , userId);
         delete userSocketMap[userId];
