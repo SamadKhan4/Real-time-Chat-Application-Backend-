@@ -33,7 +33,7 @@ export const getUsersForSidebar = async (req , res) => {
 
 export const createGroup = async (req, res) => {
     try {
-        const { name, memberIds = [] } = req.body;
+        const { name, bio = "", memberIds = [] } = req.body;
         const userId = req.user._id.toString();
 
         if (!name?.trim()) {
@@ -48,6 +48,7 @@ export const createGroup = async (req, res) => {
 
         const group = await Group.create({
             name: name.trim(),
+            bio: bio.trim(),
             members,
             createdBy: userId,
         });
@@ -62,6 +63,53 @@ export const createGroup = async (req, res) => {
         });
 
         res.json({ success: true, group: populatedGroup });
+    } catch (error) {
+        console.log(error.message);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export const updateGroup = async (req, res) => {
+    try {
+        const { id: groupId } = req.params;
+        const { name, bio, groupPic } = req.body;
+        const userId = req.user._id;
+
+        const group = await Group.findOne({ _id: groupId, members: userId });
+        if (!group) {
+            return res.json({ success: false, message: "Group not found" });
+        }
+
+        const updates = {};
+
+        if (name !== undefined) {
+            if (!name.trim()) {
+                return res.json({ success: false, message: "Group name required" });
+            }
+            updates.name = name.trim();
+        }
+
+        if (bio !== undefined) {
+            updates.bio = bio.trim();
+        }
+
+        if (groupPic) {
+            const uploadResponse = await cloudinary.uploader.upload(groupPic);
+            updates.groupPic = uploadResponse.secure_url;
+        }
+
+        const updatedGroup = await populateGroup(
+            Group.findByIdAndUpdate(groupId, updates, { returnDocument: "after" })
+        );
+
+        updatedGroup.members.forEach((member) => {
+            const socketId = userSocketMap[member._id.toString()];
+            if (socketId) {
+                io.to(socketId).emit("groupUpdated", updatedGroup);
+            }
+        });
+
+        res.json({ success: true, group: updatedGroup });
     } catch (error) {
         console.log(error.message);
         res.json({ success: false, message: error.message });
