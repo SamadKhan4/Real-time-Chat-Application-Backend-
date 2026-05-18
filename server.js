@@ -10,12 +10,19 @@ import { Server } from "socket.io";
 const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
+    "http://localhost:8081",
+    "http://localhost:8082",
     "https://tech-chat-dun.vercel.app",
 ]
 
+const isLocalDevOrigin = (origin) => (
+    /^http:\/\/localhost:\d+$/.test(origin) ||
+    /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
+);
+
 const corsOptions = {
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin || allowedOrigins.includes(origin) || isLocalDevOrigin(origin)) {
             callback(null, true);
         } else {
             callback(new Error("Not allowed by CORS"));
