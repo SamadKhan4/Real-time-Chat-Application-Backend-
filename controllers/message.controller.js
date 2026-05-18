@@ -1,19 +1,38 @@
 import cloudinary from "../lib/cloudinary.js";
+import ContactRequest from "../models/ContactRequest.js";
 import Group from "../models/Group.js";
 import Message from "../models/Message.js";
 import User from "../models/User.js";
 import { io , userSocketMap } from "../server.js";
 
 const populateGroup = (query) => query
-    .populate("members", "-password")
-    .populate("createdBy", "-password");
+    .populate("members", "-password -contacts")
+    .populate("createdBy", "-password -contacts");
+
+const userPublicFields = "-password -contacts";
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const isConnectedContact = async (userId, contactId) => {
+    const user = await User.findOne({ _id: userId, contacts: contactId }).select("_id");
+    return Boolean(user);
+};
+
+const populateContactRequest = (query) => query
+    .populate("requester", userPublicFields)
+    .populate("recipient", userPublicFields);
 
 // Get All user excapt loged user
 export const getUsersForSidebar = async (req , res) => {
     try {
         const userId = req.user._id;
-        const filteredUsers = await User.find({_id:{$ne : userId}}).select("-password");
+        const currentUser = await User.findById(userId).select("contacts");
+        const contactIds = currentUser?.contacts || [];
+        const filteredUsers = await User.find({_id:{$in : contactIds}}).select(userPublicFields);
         const groups = await populateGroup(Group.find({members: userId}).sort({updatedAt: -1}));
+        const contactRequests = await populateContactRequest(
+            ContactRequest.find({ recipient: userId, status: "pending" }).sort({ createdAt: -1 })
+        );
 
         //count number of message not seen
         const unseenMessages ={}
@@ -24,12 +43,140 @@ export const getUsersForSidebar = async (req , res) => {
             }
         })
         await Promise.all(promises);
-        res.json({success: true , users: filteredUsers , groups , unseenMessages})
+        res.json({success: true , users: filteredUsers , groups , unseenMessages, contactRequests})
     } catch (error) {
         console.log(error.message)
         res.json({success: false ,message:error.message })
     }
 }
+
+export const sendContactRequest = async (req, res) => {
+    try {
+        const requesterId = req.user._id;
+        const email = req.body.email?.trim().toLowerCase();
+
+        if (!email) {
+            return res.json({ success: false, message: "Email required" });
+        }
+
+        const recipient = await User.findOne({
+            email: { $regex: `^${escapeRegex(email)}$`, $options: "i" },
+        }).select(userPublicFields);
+
+        if (!recipient) {
+            return res.json({ success: false, message: "User not found" });
+        }
+
+        if (recipient._id.toString() === requesterId.toString()) {
+            return res.json({ success: false, message: "You cannot add yourself" });
+        }
+
+        if (await isConnectedContact(requesterId, recipient._id)) {
+            return res.json({ success: false, message: "User is already in your contacts" });
+        }
+
+        const existingPendingRequest = await ContactRequest.findOne({
+            status: "pending",
+            $or: [
+                { requester: requesterId, recipient: recipient._id },
+                { requester: recipient._id, recipient: requesterId },
+            ],
+        });
+
+        if (existingPendingRequest) {
+            return res.json({ success: false, message: "Contact request already pending" });
+        }
+
+        const request = await ContactRequest.create({
+            requester: requesterId,
+            recipient: recipient._id,
+        });
+        const populatedRequest = await populateContactRequest(ContactRequest.findById(request._id));
+
+        const recipientSocketId = userSocketMap[recipient._id.toString()];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit("contactRequest:new", populatedRequest);
+        }
+
+        res.json({ success: true, contactRequest: populatedRequest, message: "Contact request sent" });
+    } catch (error) {
+        console.log(error.message);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export const getContactRequests = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const incoming = await populateContactRequest(
+            ContactRequest.find({ recipient: userId, status: "pending" }).sort({ createdAt: -1 })
+        );
+        const outgoing = await populateContactRequest(
+            ContactRequest.find({ requester: userId, status: "pending" }).sort({ createdAt: -1 })
+        );
+
+        res.json({ success: true, incoming, outgoing });
+    } catch (error) {
+        console.log(error.message);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export const respondToContactRequest = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { id } = req.params;
+        const { action } = req.body;
+
+        if (!["accept", "decline"].includes(action)) {
+            return res.json({ success: false, message: "Invalid action" });
+        }
+
+        const request = await ContactRequest.findOne({
+            _id: id,
+            recipient: userId,
+            status: "pending",
+        });
+
+        if (!request) {
+            return res.json({ success: false, message: "Contact request not found" });
+        }
+
+        if (action === "decline") {
+            request.status = "declined";
+            await request.save();
+
+            const requesterSocketId = userSocketMap[request.requester.toString()];
+            if (requesterSocketId) {
+                io.to(requesterSocketId).emit("contactRequest:declined", { requestId: request._id });
+            }
+
+            return res.json({ success: true, message: "Contact request declined" });
+        }
+
+        await User.findByIdAndUpdate(request.requester, { $addToSet: { contacts: request.recipient } });
+        await User.findByIdAndUpdate(request.recipient, { $addToSet: { contacts: request.requester } });
+
+        request.status = "accepted";
+        await request.save();
+
+        const connectedUser = await User.findById(request.requester).select(userPublicFields);
+        const acceptingUser = await User.findById(request.recipient).select(userPublicFields);
+
+        const requesterSocketId = userSocketMap[request.requester.toString()];
+        if (requesterSocketId) {
+            io.to(requesterSocketId).emit("contactRequest:accepted", {
+                requestId: request._id,
+                user: acceptingUser,
+            });
+        }
+
+        res.json({ success: true, user: connectedUser, message: "Contact request accepted" });
+    } catch (error) {
+        console.log(error.message);
+        res.json({ success: false, message: error.message });
+    }
+};
 
 export const createGroup = async (req, res) => {
     try {
@@ -40,7 +187,16 @@ export const createGroup = async (req, res) => {
             return res.json({ success: false, message: "Group name required" });
         }
 
-        const members = [...new Set([userId, ...memberIds.map((id) => id.toString())])];
+        const requestedMemberIds = memberIds.map((id) => id.toString());
+        const currentUser = await User.findById(userId).select("contacts");
+        const contactIdSet = new Set((currentUser?.contacts || []).map((id) => id.toString()));
+
+        const invalidMemberId = requestedMemberIds.find((id) => !contactIdSet.has(id));
+        if (invalidMemberId) {
+            return res.json({ success: false, message: "Groups can only include accepted contacts" });
+        }
+
+        const members = [...new Set([userId, ...requestedMemberIds])];
 
         if (members.length < 2) {
             return res.json({ success: false, message: "Select at least one member" });
@@ -122,6 +278,10 @@ export const getMessage = async (req , res) => {
         const {id: selectedUserId } = req.params ;
         const myId = req.user._id;
 
+        if (!(await isConnectedContact(myId, selectedUserId))) {
+            return res.json({ success: false, message: "Accept contact request before chatting" });
+        }
+
         const messages = await  Message.find({
             $or: [
                 {senderId: myId , receiverId:selectedUserId},
@@ -149,7 +309,7 @@ export const getGroupMessages = async (req, res) => {
         }
 
         const messages = await Message.find({ groupId })
-            .populate("senderId", "-password")
+            .populate("senderId", userPublicFields)
             .sort({ createdAt: 1 });
 
         res.json({ success: true, messages });
@@ -178,6 +338,10 @@ export const sendMessage = async (req , res) =>{
         const {text , image} = req.body ;
         const receiverId = req.params.id;
         const senderId = req.user._id;
+
+        if (!(await isConnectedContact(senderId, receiverId))) {
+            return res.json({ success: false, message: "Accept contact request before chatting" });
+        }
 
         let imageUrl ;
         if(image){
@@ -229,7 +393,7 @@ export const sendGroupMessage = async (req, res) => {
             image: imageUrl,
         });
 
-        const populatedMessage = await newMessage.populate("senderId", "-password");
+        const populatedMessage = await newMessage.populate("senderId", userPublicFields);
 
         group.members.forEach((memberId) => {
             if (memberId.toString() === senderId.toString()) return;
