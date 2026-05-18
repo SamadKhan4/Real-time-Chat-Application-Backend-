@@ -77,6 +77,43 @@ export const emitToUser = (userId, event, payload) => {
     });
 };
 
+const gameStates = {};
+
+const getInitialGameState = (players) => ({
+    board: Array(9).fill(null),
+    currentTurn: "x",
+    status: "playing",
+    winner: null,
+    players,
+});
+
+const getWinner = (board) => {
+    const lines = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6],
+    ];
+
+    const winningLine = lines.find(([a, b, c]) => (
+        board[a] && board[a] === board[b] && board[a] === board[c]
+    ));
+
+    if (winningLine) {
+        return { symbol: board[winningLine[0]], line: winningLine };
+    }
+
+    if (board.every(Boolean)) {
+        return { symbol: "draw", line: [] };
+    }
+
+    return null;
+};
+
 //Socket Handler
 io.on("connection" ,(socket) =>{
     const userId = socket.handshake.query.userId;
@@ -109,6 +146,52 @@ io.on("connection" ,(socket) =>{
 
             emitToUser(memberId, "groupStopTyping", { groupId, senderId: userId });
         })
+    })
+
+    socket.on("game:join", ({ gameId, players }) => {
+        if (!gameId || !players?.x || !players?.o) return;
+
+        socket.join(gameId);
+
+        if (!gameStates[gameId]) {
+            gameStates[gameId] = getInitialGameState(players);
+        }
+
+        io.to(gameId).emit("game:state", { gameId, state: gameStates[gameId] });
+    })
+
+    socket.on("game:move", ({ gameId, index }) => {
+        const gameState = gameStates[gameId];
+        if (!gameState || gameState.status !== "playing") return;
+        if (!Number.isInteger(index) || index < 0 || index > 8 || gameState.board[index]) return;
+
+        const symbol = gameState.players.x?.toString() === userId?.toString()
+            ? "x"
+            : gameState.players.o?.toString() === userId?.toString()
+                ? "o"
+                : null;
+
+        if (!symbol || symbol !== gameState.currentTurn) return;
+
+        gameState.board[index] = symbol;
+        const winner = getWinner(gameState.board);
+
+        if (winner) {
+            gameState.status = "completed";
+            gameState.winner = winner;
+        } else {
+            gameState.currentTurn = symbol === "x" ? "o" : "x";
+        }
+
+        io.to(gameId).emit("game:state", { gameId, state: gameState });
+    })
+
+    socket.on("game:restart", ({ gameId }) => {
+        const gameState = gameStates[gameId];
+        if (!gameState) return;
+
+        gameStates[gameId] = getInitialGameState(gameState.players);
+        io.to(gameId).emit("game:state", { gameId, state: gameStates[gameId] });
     })
 
     socket.on("disconnect" , () =>{
