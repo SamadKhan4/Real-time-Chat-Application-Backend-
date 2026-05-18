@@ -45,40 +45,61 @@ export const io = new Server(server , {
 })
 
 // store online users
-export const userSocketMap = {}; // {userId : socketId}
+export const userSocketMap = {}; // { userId: Set<socketId> }
+
+const addUserSocket = (userId, socketId) => {
+    if (!userId) return;
+
+    if (!userSocketMap[userId]) {
+        userSocketMap[userId] = new Set();
+    }
+
+    userSocketMap[userId].add(socketId);
+};
+
+const removeUserSocket = (userId, socketId) => {
+    if (!userId || !userSocketMap[userId]) return;
+
+    userSocketMap[userId].delete(socketId);
+
+    if (userSocketMap[userId].size === 0) {
+        delete userSocketMap[userId];
+    }
+};
+
+export const getUserSocketIds = (userId) => (
+    Array.from(userSocketMap[userId?.toString()] || [])
+);
+
+export const emitToUser = (userId, event, payload) => {
+    getUserSocketIds(userId).forEach((socketId) => {
+        io.to(socketId).emit(event, payload);
+    });
+};
 
 //Socket Handler
 io.on("connection" ,(socket) =>{
     const userId = socket.handshake.query.userId;
     console.log("User connected" , userId);
 
-    if(userId) userSocketMap[userId] = socket.id;
+    if(userId) addUserSocket(userId, socket.id);
 
     //Emit online user to all conected client
     io.emit("getOnlineUsers" , Object.keys(userSocketMap));
 
     socket.on("typing", ({ receiverId }) => {
-        const receiverSocketId = userSocketMap[receiverId];
-        if(receiverSocketId) {
-            io.to(receiverSocketId).emit("typing", { senderId: userId });
-        }
+        emitToUser(receiverId, "typing", { senderId: userId });
     })
 
     socket.on("stopTyping", ({ receiverId }) => {
-        const receiverSocketId = userSocketMap[receiverId];
-        if(receiverSocketId) {
-            io.to(receiverSocketId).emit("stopTyping", { senderId: userId });
-        }
+        emitToUser(receiverId, "stopTyping", { senderId: userId });
     })
 
     socket.on("groupTyping", ({ groupId, members = [], senderName }) => {
         members.forEach((memberId) => {
             if(memberId === userId) return;
 
-            const memberSocketId = userSocketMap[memberId];
-            if(memberSocketId) {
-                io.to(memberSocketId).emit("groupTyping", { groupId, senderId: userId, senderName });
-            }
+            emitToUser(memberId, "groupTyping", { groupId, senderId: userId, senderName });
         })
     })
 
@@ -86,16 +107,13 @@ io.on("connection" ,(socket) =>{
         members.forEach((memberId) => {
             if(memberId === userId) return;
 
-            const memberSocketId = userSocketMap[memberId];
-            if(memberSocketId) {
-                io.to(memberSocketId).emit("groupStopTyping", { groupId, senderId: userId });
-            }
+            emitToUser(memberId, "groupStopTyping", { groupId, senderId: userId });
         })
     })
 
     socket.on("disconnect" , () =>{
         console.log("user disconnected" , userId);
-        delete userSocketMap[userId];
+        removeUserSocket(userId, socket.id);
         io.emit("getOnlineUsers" , Object.keys(userSocketMap));
     })
     console.log("socket shuru hai bhau");

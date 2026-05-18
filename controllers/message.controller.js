@@ -3,7 +3,7 @@ import ContactRequest from "../models/ContactRequest.js";
 import Group from "../models/Group.js";
 import Message from "../models/Message.js";
 import User from "../models/User.js";
-import { io , userSocketMap } from "../server.js";
+import { emitToUser } from "../server.js";
 
 const populateGroup = (query) => query
     .populate("members", "-password -contacts")
@@ -93,10 +93,7 @@ export const sendContactRequest = async (req, res) => {
         });
         const populatedRequest = await populateContactRequest(ContactRequest.findById(request._id));
 
-        const recipientSocketId = userSocketMap[recipient._id.toString()];
-        if (recipientSocketId) {
-            io.to(recipientSocketId).emit("contactRequest:new", populatedRequest);
-        }
+        emitToUser(recipient._id, "contactRequest:new", populatedRequest);
 
         res.json({ success: true, contactRequest: populatedRequest, message: "Contact request sent" });
     } catch (error) {
@@ -146,10 +143,7 @@ export const respondToContactRequest = async (req, res) => {
             request.status = "declined";
             await request.save();
 
-            const requesterSocketId = userSocketMap[request.requester.toString()];
-            if (requesterSocketId) {
-                io.to(requesterSocketId).emit("contactRequest:declined", { requestId: request._id });
-            }
+            emitToUser(request.requester, "contactRequest:declined", { requestId: request._id });
 
             return res.json({ success: true, message: "Contact request declined" });
         }
@@ -163,13 +157,10 @@ export const respondToContactRequest = async (req, res) => {
         const connectedUser = await User.findById(request.requester).select(userPublicFields);
         const acceptingUser = await User.findById(request.recipient).select(userPublicFields);
 
-        const requesterSocketId = userSocketMap[request.requester.toString()];
-        if (requesterSocketId) {
-            io.to(requesterSocketId).emit("contactRequest:accepted", {
-                requestId: request._id,
-                user: acceptingUser,
-            });
-        }
+        emitToUser(request.requester, "contactRequest:accepted", {
+            requestId: request._id,
+            user: acceptingUser,
+        });
 
         res.json({ success: true, user: connectedUser, message: "Contact request accepted" });
     } catch (error) {
@@ -212,10 +203,7 @@ export const createGroup = async (req, res) => {
         const populatedGroup = await populateGroup(Group.findById(group._id));
 
         members.forEach((memberId) => {
-            const socketId = userSocketMap[memberId];
-            if (socketId) {
-                io.to(socketId).emit("newGroup", populatedGroup);
-            }
+            emitToUser(memberId, "newGroup", populatedGroup);
         });
 
         res.json({ success: true, group: populatedGroup });
@@ -259,10 +247,7 @@ export const updateGroup = async (req, res) => {
         );
 
         updatedGroup.members.forEach((member) => {
-            const socketId = userSocketMap[member._id.toString()];
-            if (socketId) {
-                io.to(socketId).emit("groupUpdated", updatedGroup);
-            }
+            emitToUser(member._id, "groupUpdated", updatedGroup);
         });
 
         res.json({ success: true, group: updatedGroup });
@@ -357,10 +342,7 @@ export const sendMessage = async (req , res) =>{
         })
 
         // emit new messegae to reciver socket 
-        const receiverSocketId = userSocketMap[receiverId];
-        if(receiverSocketId){
-            io.to(receiverSocketId).emit("newMessage" , newMessage)
-        }
+        emitToUser(receiverId, "newMessage", newMessage);
 
         res.json({success: true , newMessage});
     } catch (error) {
@@ -398,10 +380,7 @@ export const sendGroupMessage = async (req, res) => {
         group.members.forEach((memberId) => {
             if (memberId.toString() === senderId.toString()) return;
 
-            const socketId = userSocketMap[memberId.toString()];
-            if (socketId) {
-                io.to(socketId).emit("newMessage", populatedMessage);
-            }
+            emitToUser(memberId, "newMessage", populatedMessage);
         });
 
         res.json({ success: true, newMessage: populatedMessage });
