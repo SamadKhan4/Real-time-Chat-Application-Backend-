@@ -22,6 +22,16 @@ const messageSchema = new mongoose.Schema({
             default: "invited",
         },
     },
+    codeSpace: {
+        codeSpaceId: { type: String },
+        language: { type: String, default: "javascript" },
+        participants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+        status: {
+            type: String,
+            enum: ["invited", "active", "closed"],
+            default: "invited",
+        },
+    },
     seen: {type: Boolean , default: false}
 }, {timestamps : true})
 

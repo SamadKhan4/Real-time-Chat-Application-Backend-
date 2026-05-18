@@ -320,7 +320,7 @@ export const markMesageAsSeen = async (req , res) =>{
 //Send Messages 
 export const sendMessage = async (req , res) =>{
     try {
-        const {text , image, game} = req.body ;
+        const {text , image, game, codeSpace} = req.body ;
         const receiverId = req.params.id;
         const senderId = req.user._id;
 
@@ -339,7 +339,8 @@ export const sendMessage = async (req , res) =>{
             receiverId,
             text,
             image : imageUrl,
-            game
+            game,
+            codeSpace
         })
 
         // emit new messegae to reciver socket 
@@ -354,7 +355,7 @@ export const sendMessage = async (req , res) =>{
 
 export const sendGroupMessage = async (req, res) => {
     try {
-        const { text, image, game } = req.body;
+        const { text, image, game, codeSpace } = req.body;
         const groupId = req.params.id;
         const senderId = req.user._id;
 
@@ -375,6 +376,7 @@ export const sendGroupMessage = async (req, res) => {
             text,
             image: imageUrl,
             game,
+            codeSpace,
         });
 
         const populatedMessage = await newMessage.populate("senderId", userPublicFields);

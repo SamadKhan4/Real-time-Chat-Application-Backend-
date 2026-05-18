@@ -78,6 +78,7 @@ export const emitToUser = (userId, event, payload) => {
 };
 
 const gameStates = {};
+const codeSpaceStates = {};
 
 const getInitialGameState = (players) => ({
     board: Array(9).fill(null),
@@ -113,6 +114,14 @@ const getWinner = (board) => {
 
     return null;
 };
+
+const getInitialCodeSpaceState = (participants = [], language = "javascript") => ({
+    content: "",
+    language,
+    participants,
+    updatedBy: null,
+    updatedAt: new Date().toISOString(),
+});
 
 //Socket Handler
 io.on("connection" ,(socket) =>{
@@ -192,6 +201,56 @@ io.on("connection" ,(socket) =>{
 
         gameStates[gameId] = getInitialGameState(gameState.players);
         io.to(gameId).emit("game:state", { gameId, state: gameStates[gameId] });
+    })
+
+    socket.on("code:join", ({ codeSpaceId, participants = [], language = "javascript" }) => {
+        if (!codeSpaceId) return;
+
+        socket.join(codeSpaceId);
+
+        if (!codeSpaceStates[codeSpaceId]) {
+            codeSpaceStates[codeSpaceId] = getInitialCodeSpaceState(participants, language);
+        }
+
+        io.to(codeSpaceId).emit("code:state", {
+            codeSpaceId,
+            state: codeSpaceStates[codeSpaceId],
+        });
+    })
+
+    socket.on("code:update", ({ codeSpaceId, content, language }) => {
+        if (!codeSpaceId || typeof content !== "string") return;
+
+        const previousState = codeSpaceStates[codeSpaceId] || getInitialCodeSpaceState();
+        codeSpaceStates[codeSpaceId] = {
+            ...previousState,
+            content,
+            language: language || previousState.language,
+            updatedBy: userId,
+            updatedAt: new Date().toISOString(),
+        };
+
+        socket.to(codeSpaceId).emit("code:state", {
+            codeSpaceId,
+            state: codeSpaceStates[codeSpaceId],
+        });
+    })
+
+    socket.on("code:language", ({ codeSpaceId, language }) => {
+        if (!codeSpaceId || !language) return;
+
+        const previousState = codeSpaceStates[codeSpaceId] || getInitialCodeSpaceState();
+        codeSpaceStates[codeSpaceId] = {
+            ...previousState,
+            language,
+            updatedBy: userId,
+            updatedAt: new Date().toISOString(),
+        };
+
+        io.to(codeSpaceId).emit("code:state", {
+            codeSpaceId,
+            state: codeSpaceStates[codeSpaceId],
+        });
     })
 
     socket.on("disconnect" , () =>{
